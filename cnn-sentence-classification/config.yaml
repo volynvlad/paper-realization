@@ -1,0 +1,13 @@
+plot_path: ./data/plot.tok.gt9.5000
+quote_path: ./data/quote.tok.gt9.5000
+
+word2vec_model_path: ./models/word2vec.pth
+train_new_word2vec_model: False
+
+cnn_model_path: ./models/cnn.pth
+train_new_cnn_model: True
+window_size: 5
+features_num: 150
+max_sentence_len: 30
+device: cpu
+
