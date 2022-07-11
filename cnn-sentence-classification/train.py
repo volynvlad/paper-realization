@@ -23,6 +23,7 @@ from data import PaddedSequenceDataset, \
 np.random.seed(373)
 
 
+#  TODO make for cuda device
 class CNNSentanceClassifier(nn.Module):
     def __init__(self,
                  h: int,
@@ -44,12 +45,13 @@ class CNNSentanceClassifier(nn.Module):
                                      sentence_length - h + 1,
                                      1)
         self.relu = nn.ReLU()
-        self.max_pool = nn.MaxPool1d(features_num, stride=1)
+        self.max_pool = nn.MaxPool1d(features_num, stride=2)
+        self.dropout = torch.nn.Dropout(0.5)
+
         self.linear = nn.Linear(in_features=sentence_length - h + 1,
                                 out_features=1,
                                 bias=True)
-        self.dropout = nn.Dropout(0.5)
-
+        self.sigmoid = nn.Sigmoid()
         self.device = device
         if self.device is None:
             self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -80,7 +82,7 @@ Linear: {self.linear}\n
         x = self.max_pool(x)
         x = torch.reshape(x, (-1, self.sentence_length - self.h + 1))
         x = self.dropout(x)
-        x = self.linear(x)
+        x = self.sigmoid(self.linear(x))
         return x
 
 
@@ -113,8 +115,8 @@ def main():
 
     # build vocabulary from train text data
     vocabulary, word_doc_freq = build_vocabulary(train_tokenized,
-                                                 max_doc_freq=0.85,
-                                                 min_count=3,
+                                                 max_doc_freq=0.8,
+                                                 min_count=5,
                                                  pad_word="<PAD>")
     print(f"vocabulary size = {len(vocabulary)}")
 
@@ -136,11 +138,11 @@ def main():
 
     # add paddings to data
     train_dataset = PaddedSequenceDataset(train_token_ids,
-                                          train_labels,
+                                          np.zeros(len(train_token_ids)),
                                           out_len=config["max_sentence_len"])
 
     test_dataset = PaddedSequenceDataset(test_token_ids,
-                                         test_labels,
+                                         np.zeros(len(test_token_ids)),
                                          out_len=config["max_sentence_len"])
 
     @timing
@@ -149,14 +151,16 @@ def main():
         trainer = SkipGramNegativeSamplingTrainer(len(vocabulary),
                                                   config["features_num"],
                                                   config["max_sentence_len"],
-                                                  radius=3,
+                                                  radius=config["radius"],
                                                   negative_samples_n=32)
         if not config['train_new_word2vec_model'] and os.path.isfile(config["word2vec_model_path"]):
 
+            print("Loading word2vec model...")
             trainer.load_state_dict(torch.load(config['word2vec_model_path']))
             return trainer
         else:
 
+            print("Training word2vec model...")
             print(f"train dataset size: {len(train_dataset)}")
             print(f"test dataset size: {len(test_dataset)}")
 
@@ -165,15 +169,16 @@ def main():
                 train_dataset,
                 test_dataset,
                 no_loss,
-                lr=3e-4,
+                lr=config["word2vec_lr"],
                 epoch_n=200,
-                batch_size=32,
+                batch_size=48,
                 device=config["device"],
-                early_stopping_patience=20,
+                early_stopping_patience=10,
                 max_batches_per_epoch_train=3000,
                 max_batches_per_epoch_val=len(test_dataset),
                 lr_scheduler_ctor=lambda optim: torch.optim.lr_scheduler.
-                ReduceLROnPlateau(optim, patience=5))
+                ReduceLROnPlateau(optim, patience=3),
+                is_embedding=True)
 
             torch.save(best_model.state_dict(), config['word2vec_model_path'])
 
@@ -214,11 +219,13 @@ def main():
                                           device="cpu")
         if (not config['train_new_cnn_model'] and
             os.path.isfile(config["cnn_model_path"])):
+            print("Loading cnn model...")
 
             cnn_model.load_state_dict(torch.load(config['cnn_model_path']))
             return cnn_model
         else:
 
+            print("Training cnn model...")
             print(f"train dataset size: {len(train_dataset)}")
             print(f"test dataset size: {len(test_dataset)}")
 
@@ -226,17 +233,18 @@ def main():
                 cnn_model,
                 train_dataset,
                 test_dataset,
-                torch.nn.CrossEntropyLoss(),
-                lr=3e-4,
+                torch.nn.BCELoss(),
+                lr=config["cnn_lr"],
                 epoch_n=200,
                 batch_size=32,
                 # device="cuda",
-                device=config["cpu"],
+                device=config["device"],
                 early_stopping_patience=20,
-                max_batches_per_epoch_train=3000,
+                max_batches_per_epoch_train=4000,
                 max_batches_per_epoch_val=len(test_dataset),
+                optimizer_ctor=torch.optim.Adagrad,
                 lr_scheduler_ctor=lambda optim: torch.optim.lr_scheduler.
-                ReduceLROnPlateau(optim, patience=5))
+                ReduceLROnPlateau(optim, patience=3))
 
             torch.save(cnn_model.state_dict(), config['cnn_model_path'])
 
@@ -244,7 +252,31 @@ def main():
 
             return best_model
 
-    train_cnn(config)
+    model = train_cnn(config).eval()
+
+    # when we used balanced dataset we can use accuracy as a score
+
+    train_x, train_y = next(iter(torch.utils.data.DataLoader(train_dataset, batch_size=len(train_dataset))))
+    train_pred = model(train_x)
+    train_pred = torch.reshape(train_pred, (len(train_pred),))
+    train_pred = np.array([1 if x >= 0.5 else 0 for x in train_pred], dtype=np.float32)
+    train_y = train_y.numpy()
+
+    print(np.unique(train_pred, return_counts=True))
+    print(np.unique(train_y, return_counts=True))
+    acc = (train_pred == train_y).sum()
+    print("train accuracy: {} / {} = {:.4f}".format(acc, len(train_pred), 1.0 * acc / len(train_pred)))
+    print("=" * 100)
+    test_x, test_y = next(iter(torch.utils.data.DataLoader(test_dataset, batch_size=len(test_dataset))))
+    test_pred = model(test_x)
+    test_pred = torch.reshape(test_pred, (len(test_pred),))
+    test_pred = np.array([1 if x >= 0.5 else 0 for x in test_pred], dtype=np.float32)
+    test_y = test_y.numpy()
+
+    print(np.unique(test_pred, return_counts=True))
+    print(np.unique(test_y, return_counts=True))
+    acc = (test_pred == test_y).sum()
+    print("test accuracy: {} / {} = {:.4f}".format(acc, len(test_pred), 1.0 * acc / len(test_pred)))
 
 
 if __name__ == "__main__":

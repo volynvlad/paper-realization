@@ -63,13 +63,18 @@ class PaddedSequenceDataset(Dataset):
     def __len__(self):
         return len(self.texts)
 
+    @property
+    def shape(self):
+        return self.texts.shape
+
     def __getitem__(self, item):
         txt = self.texts[item]
         # txt = np.array([ensure_length(t, self.out_len, self.pad_value)
         #                 for t in txt])
         txt = ensure_length(txt, self.out_len, self.pad_value)
         if self.embeddings is None:
-            txt = torch.tensor(txt, dtype=torch.float)
+            # txt = torch.tensor(txt, dtype=torch.float)
+            txt = np.array(txt)
         else:
             txt = self.embeddings.get_vectors(txt)
         target = torch.tensor(self.targets[item], dtype=torch.float)
@@ -177,7 +182,8 @@ def train_eval_loop(model,
                     optimizer_ctor=None,
                     lr_scheduler_ctor=None,
                     shuffle_train=True,
-                    dataloader_workers_n=0):
+                    dataloader_workers_n=0,
+                    is_embedding=False):
     """
 	Цикл для обучения модели. После каждой эпохи качество модели оценивается по отложенной выборке.
 	:param model: torch.nn.Module - обучаемая модель
@@ -205,9 +211,9 @@ def train_eval_loop(model,
     model.to(device)
 
     if optimizer_ctor is None:
-        optimizer = torch.optim.Adadelta(model.parameters(),
-                                         lr=lr,
-                                         weight_decay=l2_reg_alpha)
+        optimizer = torch.optim.Adam(model.parameters(),
+                                     lr=lr,
+                                     weight_decay=l2_reg_alpha)
     else:
         optimizer = optimizer_ctor(model.parameters(), lr=lr)
 
@@ -245,15 +251,17 @@ def train_eval_loop(model,
                 batch_y = copy_data_to_device(batch_y, device)
 
                 pred = model(batch_x)
-                if (isinstance(pred, torch.Tensor)
+                if not is_embedding and (isinstance(pred, torch.Tensor)
                     and isinstance(batch_y, torch.Tensor)
                     and len(pred.shape) != len(batch_y.shape)):
-                    batch_y = torch.reshape(batch_y, pred.shape)
+                    # batch_y = torch.reshape(batch_y, pred.shape)
+                    pred = torch.reshape(pred, batch_y.shape)
 
                 try:
                     loss = criterion(pred, batch_y)
-                    print(f"{loss=}")
-                    print(f"{pred=}, {batch_y=}")
+                    # print(f"{loss=}")
+                    # print(f"{pred=}, {batch_y=}")
+                    # print(f"{pred.dtype=}, {batch_y.dtype=}")
                 except:
                     print(f"{pred=}, {batch_y=}")
                     print(f"{len(pred)=}, {len(batch_y)=}")
@@ -286,14 +294,13 @@ def train_eval_loop(model,
                     batch_y = copy_data_to_device(batch_y, device)
 
                     pred = model(batch_x)
-                    if (isinstance(pred, torch.Tensor)
+                    if not is_embedding and (isinstance(pred, torch.Tensor)
                         and isinstance(batch_y, torch.Tensor)
                         and len(pred.shape) != len(batch_y.shape)):
                         batch_y = torch.reshape(batch_y, pred.shape)
 
                     try:
                         loss = criterion(pred, batch_y)
-                        print(f"{loss=}")
                     except:
                         print(f"{pred=}, {batch_y=}")
                         print(f"{len(pred)=}, {len(batch_y)=}")
@@ -325,6 +332,7 @@ def train_eval_loop(model,
         except Exception as ex:
             print('Error while training: {}\n{}'.format(
                 ex, traceback.format_exc()))
+            exit()
             break
 
     return best_val_loss, best_model
