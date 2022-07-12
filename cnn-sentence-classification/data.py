@@ -1,5 +1,4 @@
-import datetime
-import random
+from datetime import datetime
 import traceback
 import copy
 from typing import List
@@ -7,18 +6,18 @@ from typing import List
 import numpy as np
 
 import torch
-from torch import isin, nn
+from torch import nn
 from torch.nn import functional as F
 from torch.utils.data import Dataset
 from torch.utils.data import DataLoader
 
 
 def read_data(config):
-    with open(config['plot_path'], "rb") as r:
-        data_plot = r.read().decode(errors='replace').split("\n")
+    with open(config["plot_path"], "rb") as read:
+        data_plot = read.read().decode(errors="replace").split("\n")
 
-    with open(config['quote_path'], "rb") as r:
-        data_quote = r.read().decode(errors='replace').split("\n")
+    with open(config["quote_path"], "rb") as read:
+        data_quote = read.read().decode(errors="replace").split("\n")
 
     return np.array(data_plot[:-1]), np.array(data_quote[:-1])
 
@@ -26,10 +25,10 @@ def read_data(config):
 def generate_data_labels(*args):
     data = np.array([], dtype=np.int32)
     labels = np.array([], dtype=np.int32)
-    for i, x in enumerate(args):
-        data = np.concatenate([data, x])
+    for i, arg in enumerate(args):
+        data = np.concatenate([data, arg])
         labels = np.concatenate(
-            [labels, np.ones_like(x, dtype=np.int32) * int(i)])
+            [labels, np.ones_like(arg, dtype=np.int32) * int(i)])
     return data, labels
 
 
@@ -185,28 +184,34 @@ def train_eval_loop(model,
                     dataloader_workers_n=0,
                     is_embedding=False):
     """
-	Цикл для обучения модели. После каждой эпохи качество модели оценивается по отложенной выборке.
-	:param model: torch.nn.Module - обучаемая модель
-	:param train_dataset: torch.utils.data.Dataset - данные для обучения
-	:param val_dataset: torch.utils.data.Dataset - данные для оценки качества
-	:param criterion: функция потерь для настройки модели
-	:param lr: скорость обучения
-	:param epoch_n: максимальное количество эпох
-	:param batch_size: количество примеров, обрабатываемых моделью за одну итерацию
-	:param device: cuda/cpu - устройство, на котором выполнять вычисления
-	:param early_stopping_patience: наибольшее количество эпох, в течение которых допускается
-		отсутствие улучшения модели, чтобы обучение продолжалось.
-	:param l2_reg_alpha: коэффициент L2-регуляризации
-	:param max_batches_per_epoch_train: максимальное количество итераций на одну эпоху обучения
-	:param max_batches_per_epoch_val: максимальное количество итераций на одну эпоху валидации
-	:param data_loader_ctor: функция для создания объекта, преобразующего датасет в батчи
-		(по умолчанию torch.utils.data.DataLoader)
-	:return: кортеж из двух элементов:
-		- среднее значение функции потерь на валидации на лучшей эпохе
-		- лучшая модель
-	"""
+    A cycle for training models.
+        After each epoch,
+        the evaluation of the quality of the model is delayed by the sample.
+    :param model: torch.nn.Module - training model
+    :param train_dataset: torch.utils.data.Dataset - data for training
+    :param val_dataset: torch.utils.data.Dataset - data for validation
+    :param criterion: loss function
+    :param lr: learning rate
+    :param epoch_n: max number of epochs
+    :param batch_size: number of samples,
+        that are training by model on each iteration
+    :param device: cuda/cpu - device on which we will train model
+    :param early_stopping_patience: the largest number of epochs during which
+        lack of model improvement to keep learning going.
+    :param l2_reg_alpha: coef L2-regularization
+    :param max_batches_per_epoch_train:
+        max number of iteration on each epoch on train
+    :param max_batches_per_epoch_val:
+        max number of iteration on each epoch on valid
+    :param data_loader_ctor:
+        function of the object that convert dataset into batches
+    (default: torch.utils.data.DataLoader)
+    :return: tuple of two elements:
+        - mean loss on validation on best epoch
+        - best model
+    """
     if device is None:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     device = torch.device(device)
     model.to(device)
 
@@ -231,14 +236,14 @@ def train_eval_loop(model,
                                       shuffle=False,
                                       num_workers=dataloader_workers_n)
 
-    best_val_loss = float('inf')
+    best_val_loss = float("inf")
     best_epoch_i = 0
     best_model = copy.deepcopy(model)
 
     for epoch_i in range(epoch_n):
         try:
-            epoch_start = datetime.datetime.now()
-            print('Epoch {}'.format(epoch_i))
+            epoch_start = datetime.now()
+            print(f"Epoch {epoch_i}")
 
             model.train()
             mean_train_loss = 0
@@ -252,16 +257,12 @@ def train_eval_loop(model,
 
                 pred = model(batch_x)
                 if not is_embedding and (isinstance(pred, torch.Tensor)
-                    and isinstance(batch_y, torch.Tensor)
-                    and len(pred.shape) != len(batch_y.shape)):
-                    # batch_y = torch.reshape(batch_y, pred.shape)
+                                         and isinstance(batch_y, torch.Tensor)
+                                         and len(pred.shape) != len(batch_y.shape)):
                     pred = torch.reshape(pred, batch_y.shape)
 
                 try:
                     loss = criterion(pred, batch_y)
-                    # print(f"{loss=}")
-                    # print(f"{pred=}, {batch_y=}")
-                    # print(f"{pred.dtype=}, {batch_y.dtype=}")
                 except:
                     print(f"{pred=}, {batch_y=}")
                     print(f"{len(pred)=}, {len(batch_y)=}")
@@ -276,10 +277,11 @@ def train_eval_loop(model,
                 train_batches_n += 1
 
             mean_train_loss /= train_batches_n
-            print('Epoch: {} iterations, {:0.2f} sec'.format(
-                train_batches_n,
-                (datetime.datetime.now() - epoch_start).total_seconds()))
-            print('Mean value of loss function on training', mean_train_loss)
+            time_delta = (datetime.now() - epoch_start).total_seconds()
+            print(f"Epoch: {train_batches_n} "
+                  f"iterations, {time_delta:0.2f} sec")
+            print("Mean value of loss "
+                  f"function on training: {mean_train_loss}")
 
             model.eval()
             mean_val_loss = 0
@@ -295,8 +297,9 @@ def train_eval_loop(model,
 
                     pred = model(batch_x)
                     if not is_embedding and (isinstance(pred, torch.Tensor)
-                        and isinstance(batch_y, torch.Tensor)
-                        and len(pred.shape) != len(batch_y.shape)):
+                                             and isinstance(batch_y,
+                                                            torch.Tensor)
+                                             and len(pred.shape) != len(batch_y.shape)):
                         batch_y = torch.reshape(batch_y, pred.shape)
 
                     try:
@@ -310,16 +313,17 @@ def train_eval_loop(model,
                     val_batches_n += 1
 
             mean_val_loss /= val_batches_n
-            print('Mean value of loss function on validation', mean_val_loss)
+            print("Mean value of loss function "
+                  f"on validation: {mean_val_loss}")
 
             if mean_val_loss < best_val_loss:
                 best_epoch_i = epoch_i
                 best_val_loss = mean_val_loss
                 best_model = copy.deepcopy(model)
-                print('New best model!')
+                print("New best model!")
             elif epoch_i - best_epoch_i > early_stopping_patience:
-                print('Models does not evolve in {} epochs, cancel training'.
-                      format(early_stopping_patience))
+                print("Models does not evolve in "
+                      f"{early_stopping_patience} epochs, cancel training")
                 break
 
             if lr_scheduler is not None:
@@ -327,12 +331,11 @@ def train_eval_loop(model,
 
             print()
         except KeyboardInterrupt:
-            print('Cancel training')
+            print("Cancel training")
             break
         except Exception as ex:
-            print('Error while training: {}\n{}'.format(
+            print("Error while training: {}\n{}".format(
                 ex, traceback.format_exc()))
-            exit()
             break
 
     return best_val_loss, best_model
@@ -342,7 +345,10 @@ class Embeddings:
     def __init__(self, embeddings, word2id, tagger=None):
         self.embeddings = embeddings
         self.embeddings /= (
-            np.linalg.norm(embeddings, ord=2, axis=-1, keepdims=True) +
+            np.linalg.norm(embeddings,
+                           ord=2,
+                           axis=-1,
+                           keepdims=True) +
             1e-4)
         self.word2id = word2id
         self.id2word = {i: w for w, i in word2id.items()}
@@ -376,23 +382,27 @@ class Embeddings:
         return result
 
     def get_vector(self, word):
-        assert isinstance(word, str) or isinstance(word, torch.Tensor) or isinstance(word, np.ndarray)
+        assert (isinstance(word, str)
+                or isinstance(word, torch.Tensor)
+                or isinstance(word, np.ndarray))
         if isinstance(word, torch.Tensor):
             return np.array(self.embeddings[word.tolist()])
         else:
             if self.tagger:
                 tokens = self.tagger(word)
                 print(
-                    f"Get vector to the word = {word} and pos tag = {tokens[0].pos_}"
+                    f"Get vector to the word = {word}"
+                    f"and pos tag = {tokens[0].pos_}"
                 )
                 word = word + "_" + tokens[0].pos_
             if word not in self.word2id:
-                raise ValueError('Unknown word "{}"'.format(word))
+                raise ValueError(f'Unknown word "{word}"')
             return np.array(self.embeddings[self.word2id[word]])
 
     def get_vectors(self, words):
-        # print([self.id2word[int(i.tolist()[0])] for i in words])
-        assert isinstance(words, List) or isinstance(words, torch.Tensor) or isinstance(words, np.ndarray)
+        assert (isinstance(words, List)
+                or isinstance(words, torch.Tensor)
+                or isinstance(words, np.ndarray))
         if isinstance(words, np.ndarray):
             word_ids = np.stack([w for w in words])
         elif isinstance(words, torch.Tensor):
